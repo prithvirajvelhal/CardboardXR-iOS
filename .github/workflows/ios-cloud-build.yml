@@ -1,3 +1,4 @@
+
 name: CardboardXR iOS cloud build
 
 on:
@@ -8,9 +9,9 @@ permissions:
 
 jobs:
   build-ios:
-    # iOS requires macOS + Xcode. This workflow is manually started from Actions.
     runs-on: macos-15
     timeout-minutes: 90
+
     steps:
       - name: Check out project
         uses: actions/checkout@v4
@@ -30,18 +31,19 @@ jobs:
           buildName: CardboardXR
           versioning: None
 
-      - name: Build unsigned iOS app with Xcode
+      - name: Build and package unsigned iOS app
         shell: bash
         run: |
           set -euo pipefail
-          # StereoBuilder.BuildIos writes to the literal path Builds/iOS (not Builds/CI/iOS).
+
           PROJECT="Builds/iOS/Unity-iPhone.xcodeproj"
+
           if [[ ! -d "$PROJECT" ]]; then
             echo "Expected Xcode project not found at $PROJECT"
-            echo "Unity output tree:"
             find Builds -maxdepth 5 -print || true
             exit 1
           fi
+
           xcodebuild -project "$PROJECT" \
             -scheme Unity-iPhone \
             -configuration Release \
@@ -49,11 +51,28 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/CardboardXRDerived" \
             CODE_SIGNING_ALLOWED=NO \
             build | tee "$RUNNER_TEMP/xcode-build.log"
-          APP=$(find "$RUNNER_TEMP/CardboardXRDerived/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d | head -n 1)
+
+          APP=$(find "$RUNNER_TEMP/CardboardXRDerived/Build/Products/Release-iphoneos" \
+            -maxdepth 1 -name '*.app' -type d | head -n 1)
+
           test -n "$APP"
+
+          echo "Removing existing code signatures..."
+
+          codesign --remove-signature "$APP" 2>/dev/null || true
+
+          while IFS= read -r -d '' FRAMEWORK; do
+            echo "Checking framework: $FRAMEWORK"
+            codesign --remove-signature "$FRAMEWORK" 2>/dev/null || true
+          done < <(find "$APP" -type d -name '*.framework' -print0)
+
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
+
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/CardboardXR-unsigned.ipa" Payload)
+
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry \
+            "$GITHUB_WORKSPACE/CardboardXR-unsigned.ipa" Payload)
+
           cp "$RUNNER_TEMP/xcode-build.log" "$GITHUB_WORKSPACE/xcode-build.log"
 
       - name: Upload build outputs and diagnostics
