@@ -1,0 +1,69 @@
+name: CardboardXR iOS cloud build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    # iOS requires macOS + Xcode. This workflow is manually started from Actions.
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Build Unity iOS Xcode project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: .
+          unityVersion: 6000.6.0f1
+          targetPlatform: iOS
+          buildMethod: ProjectBootstrap.StereoBuilder.BuildIos
+          buildsPath: Builds/CI
+          buildName: CardboardXR
+          versioning: None
+
+      - name: Build unsigned iOS app with Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          # StereoBuilder.BuildIos writes to the literal path Builds/iOS (not Builds/CI/iOS).
+          PROJECT="Builds/iOS/Unity-iPhone.xcodeproj"
+          if [[ ! -d "$PROJECT" ]]; then
+            echo "Expected Xcode project not found at $PROJECT"
+            echo "Unity output tree:"
+            find Builds -maxdepth 5 -print || true
+            exit 1
+          fi
+          xcodebuild -project "$PROJECT" \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/CardboardXRDerived" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/xcode-build.log"
+          APP=$(find "$RUNNER_TEMP/CardboardXRDerived/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d | head -n 1)
+          test -n "$APP"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/CardboardXR-unsigned.ipa" Payload)
+          cp "$RUNNER_TEMP/xcode-build.log" "$GITHUB_WORKSPACE/xcode-build.log"
+
+      - name: Upload build outputs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CardboardXR-iOS-build-output
+          path: |
+            CardboardXR-unsigned.ipa
+            Builds/iOS
+            xcode-build.log
+          if-no-files-found: warn
+          retention-days: 7
