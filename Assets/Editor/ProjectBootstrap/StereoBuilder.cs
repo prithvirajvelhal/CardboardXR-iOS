@@ -160,6 +160,7 @@ namespace ProjectBootstrap
         {
             MaterialAssets.Ensure();
             DemoScenes.EnsureAll();
+            LionCinemaBuilder.Ensure();
             var catalog = BuildCoreScene();
             if (catalog == null)
                 return new[] { CoreScene };
